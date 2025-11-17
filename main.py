@@ -1,74 +1,86 @@
+﻿from fastapi import FastAPI
+from pydantic import BaseModel, Field
+import pandas as pd
+from ml.data import process_data
+from ml.model import load_model, inference
 import os
 
-import pandas as pd
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
+app = FastAPI()
 
-from ml.data import apply_label, process_data
-from ml.model import inference, load_model
+model_path = os.path.join('model', 'model.pkl')
+encoder_path = os.path.join('model', 'encoder.pkl')
 
-# DO NOT MODIFY
-class Data(BaseModel):
+model = load_model(model_path)
+encoder = load_model(encoder_path)
+
+cat_features = [
+    'workclass',
+    'education',
+    'marital-status',
+    'occupation',
+    'relationship',
+    'race',
+    'sex',
+    'native-country',
+]
+
+
+class CensusData(BaseModel):
     age: int = Field(..., example=37)
-    workclass: str = Field(..., example="Private")
+    workclass: str = Field(..., example='Private')
     fnlgt: int = Field(..., example=178356)
-    education: str = Field(..., example="HS-grad")
-    education_num: int = Field(..., example=10, alias="education-num")
-    marital_status: str = Field(
-        ..., example="Married-civ-spouse", alias="marital-status"
+    education: str = Field(..., example='HS-grad')
+    education_num: int = Field(..., alias='education-num', example=10)
+    marital_status: str = Field(..., alias='marital-status', example='Married-civ-spouse')
+    occupation: str = Field(..., example='Prof-specialty')
+    relationship: str = Field(..., example='Husband')
+    race: str = Field(..., example='White')
+    sex: str = Field(..., example='Male')
+    capital_gain: int = Field(..., alias='capital-gain', example=0)
+    capital_loss: int = Field(..., alias='capital-loss', example=0)
+    hours_per_week: int = Field(..., alias='hours-per-week', example=40)
+    native_country: str = Field(..., alias='native-country', example='United-States')
+
+    class Config:
+        populate_by_name = True
+
+
+@app.get('/')
+async def root():
+    return {'message': 'Welcome to the Census Income Prediction API!'}
+
+
+@app.post('/predict')
+async def predict(data: CensusData):
+    input_dict = {
+        'age': [data.age],
+        'workclass': [data.workclass],
+        'fnlgt': [data.fnlgt],
+        'education': [data.education],
+        'education-num': [data.education_num],
+        'marital-status': [data.marital_status],
+        'occupation': [data.occupation],
+        'relationship': [data.relationship],
+        'race': [data.race],
+        'sex': [data.sex],
+        'capital-gain': [data.capital_gain],
+        'capital-loss': [data.capital_loss],
+        'hours-per-week': [data.hours_per_week],
+        'native-country': [data.native_country]
+    }
+    
+    input_df = pd.DataFrame(input_dict)
+    
+    X, _, _, _ = process_data(
+        input_df,
+        categorical_features=cat_features,
+        training=False,
+        encoder=encoder,
+        lb=None
     )
-    occupation: str = Field(..., example="Prof-specialty")
-    relationship: str = Field(..., example="Husband")
-    race: str = Field(..., example="White")
-    sex: str = Field(..., example="Male")
-    capital_gain: int = Field(..., example=0, alias="capital-gain")
-    capital_loss: int = Field(..., example=0, alias="capital-loss")
-    hours_per_week: int = Field(..., example=40, alias="hours-per-week")
-    native_country: str = Field(..., example="United-States", alias="native-country")
-
-path = None # TODO: enter the path for the saved encoder 
-encoder = load_model(path)
-
-path = None # TODO: enter the path for the saved model 
-model = load_model(path)
-
-# TODO: create a RESTful API using FastAPI
-app = None # your code here
-
-# TODO: create a GET on the root giving a welcome message
-@app.get("/")
-async def get_root():
-    """ Say hello!"""
-    # your code here
-    pass
-
-
-# TODO: create a POST on a different path that does model inference
-@app.post("/data/")
-async def post_inference(data: Data):
-    # DO NOT MODIFY: turn the Pydantic model into a dict.
-    data_dict = data.dict()
-    # DO NOT MODIFY: clean up the dict to turn it into a Pandas DataFrame.
-    # The data has names with hyphens and Python does not allow those as variable names.
-    # Here it uses the functionality of FastAPI/Pydantic/etc to deal with this.
-    data = {k.replace("_", "-"): [v] for k, v in data_dict.items()}
-    data = pd.DataFrame.from_dict(data)
-
-    cat_features = [
-        "workclass",
-        "education",
-        "marital-status",
-        "occupation",
-        "relationship",
-        "race",
-        "sex",
-        "native-country",
-    ]
-    data_processed, _, _, _ = process_data(
-        # your code here
-        # use data as data input
-        # use training = False
-        # do not need to pass lb as input
-    )
-    _inference = None # your code here to predict the result using data_processed
-    return {"result": apply_label(_inference)}
+    
+    pred = inference(model, X)
+    
+    prediction = '>50K' if pred[0] == 1 else '<=50K'
+    
+    return {'prediction': prediction}
